@@ -1,0 +1,6 @@
+bin
+obj
+/packages
+SmoothSave.sln.DotSettings.user
+.idea
+.vs
