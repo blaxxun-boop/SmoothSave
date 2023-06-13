@@ -15,10 +15,11 @@ using Debug = UnityEngine.Debug;
 namespace SmoothSave;
 
 [BepInPlugin(ModGUID, ModName, ModVersion)]
+[BepInIncompatibility("org.bepinex.plugins.valheim_plus")]
 public class SmoothSave : BaseUnityPlugin
 {
 	private const string ModName = "Smooth Save";
-	private const string ModVersion = "1.0.0";
+	private const string ModVersion = "1.0.1";
 	private const string ModGUID = "org.bepinex.plugins.smoothsave";
 
 	private static ConfigEntry<int> zdoBatchSize = null!;
@@ -59,7 +60,7 @@ public class SmoothSave : BaseUnityPlugin
 		}
 	}
 
-	[HarmonyPatch(typeof(ZDO), nameof(ZDO.IncreseDataRevision))]
+	[HarmonyPatch(typeof(ZDO), nameof(ZDO.IncreaseDataRevision))]
 	public class TrackZDOChanges
 	{
 		private static void CloneUpdatedZDO(ZDO zdo)
@@ -115,7 +116,7 @@ public class SmoothSave : BaseUnityPlugin
 
 					Label endLabel = ilg.DefineLabel();
 
-					instructions.InsertRange(i + 1, new[]
+					instructions.InsertRange(i + 2, new[]
 					{
 						new CodeInstruction(OpCodes.Ldsfld, AccessTools.DeclaredField(typeof(SmoothSave), nameof(copiedZdoIndices))),
 						new CodeInstruction(OpCodes.Brfalse, endLabel),
@@ -125,7 +126,7 @@ public class SmoothSave : BaseUnityPlugin
 
 					instructions.Insert(i - 1, new CodeInstruction(OpCodes.Dup));
 
-					i += 5;
+					i += 6;
 				}
 			}
 
@@ -192,7 +193,7 @@ public class SmoothSave : BaseUnityPlugin
 	{
 		private static void AddZdo(ZDO zdo, int index)
 		{
-			if (copiedZdoIndices != null && index < copyingSectorId && zdo.m_persistent)
+			if (copiedZdoIndices != null && index < copyingSectorId && zdo.Persistent)
 			{
 				copiedZdoIndices.Add(zdo.m_uid, copiedZdos.Count);
 				copiedZdos.Add(zdo);
@@ -234,7 +235,7 @@ public class SmoothSave : BaseUnityPlugin
 
 				zdoMan.m_saveData = new ZDOMan.SaveData
 				{
-					m_myid = zdoMan.m_myid,
+					m_sessionID = zdoMan.m_sessionID,
 					m_zdos = saveZDOs,
 				};
 
@@ -255,7 +256,7 @@ public class SmoothSave : BaseUnityPlugin
 						for (int i = 0; i < zdos.Count; ++i)
 						{
 							ZDO zdo = zdos[i];
-							if (zdo.m_persistent)
+							if (zdo.Persistent)
 							{
 								zdoIndex.Add(zdo.m_uid, saveZDOs.Count);
 								saveZDOs.Add(zdo.Clone());
@@ -293,7 +294,7 @@ public class SmoothSave : BaseUnityPlugin
 				{
 					foreach (ZDO zdo in zdoList)
 					{
-						if (zdo.m_persistent)
+						if (zdo.Persistent)
 						{
 							saveZDOs.Add(zdo.Clone());
 						}
@@ -301,10 +302,6 @@ public class SmoothSave : BaseUnityPlugin
 				}
 
 				stopwatch.Stop();
-
-				Stopwatch deadZdoStopWatch = Stopwatch.StartNew();
-				zdoMan.m_saveData.m_deadZDOs = new Dictionary<ZDOID, long>(zdoMan.m_deadZDOs);
-				deadZdoStopWatch.Stop();
 
 				zdoMan.m_saveData.m_nextUid = zdoMan.m_nextUid;
 
@@ -314,7 +311,7 @@ public class SmoothSave : BaseUnityPlugin
 				}
 				else if (saveLoggingOutput.Value == Logging.Detailed)
 				{
-					Debug.Log($"Copying ZDOs into internal buffer took {stopwatch.ElapsedMilliseconds} ms. (Longest blocking time: {longestBlockingTime} ms, copying ZDOs outside sector time: {stopwatch.ElapsedMilliseconds - outsideSectorStart} ms). Copying dead ZDOs took {deadZdoStopWatch.ElapsedMilliseconds} ms.");
+					Debug.Log($"Copying ZDOs into internal buffer took {stopwatch.ElapsedMilliseconds} ms. (Longest blocking time: {longestBlockingTime} ms, copying ZDOs outside sector time: {stopwatch.ElapsedMilliseconds - outsideSectorStart} ms.");
 				}
 
 				ZoneSystem.instance.PrepareSave();
