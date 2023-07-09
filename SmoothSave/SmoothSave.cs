@@ -19,7 +19,7 @@ namespace SmoothSave;
 public class SmoothSave : BaseUnityPlugin
 {
 	private const string ModName = "Smooth Save";
-	private const string ModVersion = "1.0.1";
+	private const string ModVersion = "1.0.2";
 	private const string ModGUID = "org.bepinex.plugins.smoothsave";
 
 	private static ConfigEntry<int> zdoBatchSize = null!;
@@ -44,9 +44,16 @@ public class SmoothSave : BaseUnityPlugin
 
 	private static Task customZDOCopyTask = Task.CompletedTask;
 
+	private static readonly List<int> removedIndices = new();
 	private static Dictionary<ZDOID, int>? copiedZdoIndices;
 	private static List<ZDO> copiedZdos = null!;
-	private static readonly List<int> removedIndices = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, float>> copiedZdo_floats = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, Vector3>> copiedZdo_vec3 = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, Quaternion>> copiedZdo_quats = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, int>> copiedZdo_ints = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, long>> copiedZdo_longs = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, string>> copiedZdo_strings = new();
+	private static Dictionary<ZDOID, BinarySearchDictionary<int, byte[]>> copiedZdo_byteArrays = new();
 
 	private static int copyingSectorId;
 	private static int copyingSectorOffset;
@@ -68,6 +75,7 @@ public class SmoothSave : BaseUnityPlugin
 			if (copiedZdoIndices!.TryGetValue(zdo.m_uid, out int index))
 			{
 				copiedZdos[index] = zdo.Clone();
+				UpdateZDOExtraData(zdo.m_uid);
 			}
 		}
 
@@ -99,6 +107,7 @@ public class SmoothSave : BaseUnityPlugin
 			if (copiedZdoIndices!.TryGetValue(zdo.m_uid, out int index))
 			{
 				copiedZdos[index] = zdo.Clone();
+				UpdateZDOExtraData(zdo.m_uid);
 			}
 
 			return zdo;
@@ -160,8 +169,16 @@ public class SmoothSave : BaseUnityPlugin
 				// might not be defined for non-persistent objects
 				if (indices.TryGetValue(zdo.m_uid, out int copyIndex))
 				{
+					ZDOID zdoid = zdo.m_uid;
 					removedIndices.Add(copyIndex);
-					indices.Remove(zdo.m_uid);
+					indices.Remove(zdoid);
+					copiedZdo_floats.Remove(zdoid);
+					copiedZdo_vec3.Remove(zdoid);
+					copiedZdo_quats.Remove(zdoid);
+					copiedZdo_ints.Remove(zdoid);
+					copiedZdo_longs.Remove(zdoid);
+					copiedZdo_strings.Remove(zdoid);
+					copiedZdo_byteArrays.Remove(zdoid);
 				}
 			}
 
@@ -197,6 +214,7 @@ public class SmoothSave : BaseUnityPlugin
 			{
 				copiedZdoIndices.Add(zdo.m_uid, copiedZdos.Count);
 				copiedZdos.Add(zdo);
+				UpdateZDOExtraData(zdo.m_uid);
 			}
 		}
 
@@ -218,6 +236,38 @@ public class SmoothSave : BaseUnityPlugin
 		}
 	}
 
+	private static void UpdateZDOExtraData(ZDOID zdoid)
+	{
+		if (ZDOExtraData.s_floats.TryGetValue(zdoid, out BinarySearchDictionary<int, float>? value_floats))
+		{
+			copiedZdo_floats[zdoid] = (BinarySearchDictionary<int, float>)value_floats.Clone();
+		}
+		if (ZDOExtraData.s_vec3.TryGetValue(zdoid, out BinarySearchDictionary<int, Vector3>? value_vec3))
+		{
+			copiedZdo_vec3[zdoid] = (BinarySearchDictionary<int, Vector3>)value_vec3.Clone();
+		}
+		if (ZDOExtraData.s_quats.TryGetValue(zdoid, out BinarySearchDictionary<int, Quaternion>? value_quats))
+		{
+			copiedZdo_quats[zdoid] = (BinarySearchDictionary<int, Quaternion>)value_quats.Clone();
+		}
+		if (ZDOExtraData.s_ints.TryGetValue(zdoid, out BinarySearchDictionary<int, int>? value_ints))
+		{
+			copiedZdo_ints[zdoid] = (BinarySearchDictionary<int, int>)value_ints.Clone();
+		}
+		if (ZDOExtraData.s_longs.TryGetValue(zdoid, out BinarySearchDictionary<int, long>? value_longs))
+		{
+			copiedZdo_longs[zdoid] = (BinarySearchDictionary<int, long>)value_longs.Clone();
+		}
+		if (ZDOExtraData.s_strings.TryGetValue(zdoid, out BinarySearchDictionary<int, string>? value_strings))
+		{
+			copiedZdo_strings[zdoid] = (BinarySearchDictionary<int, string>)value_strings.Clone();
+		}
+		if (ZDOExtraData.s_byteArrays.TryGetValue(zdoid, out BinarySearchDictionary<int, byte[]>? value_byteArrays))
+		{
+			copiedZdo_byteArrays[zdoid] = (BinarySearchDictionary<int, byte[]>)value_byteArrays.Clone();
+		}
+	}
+
 	[HarmonyPatch(typeof(ZNet), nameof(ZNet.SaveWorld))]
 	public class ReplaceZDOCopying
 	{
@@ -233,6 +283,14 @@ public class SmoothSave : BaseUnityPlugin
 				Dictionary<ZDOID, int> zdoIndex = new();
 				List<ZDO> saveZDOs = new();
 
+				Dictionary<ZDOID, BinarySearchDictionary<int, float>> zdo_floats = new();
+				Dictionary<ZDOID, BinarySearchDictionary<int, Vector3>> zdo_vec3 = new();
+				Dictionary<ZDOID, BinarySearchDictionary<int, Quaternion>> zdo_quats = new();
+				Dictionary<ZDOID, BinarySearchDictionary<int, int>> zdo_ints = new();
+				Dictionary<ZDOID, BinarySearchDictionary<int, long>> zdo_longs = new();
+				Dictionary<ZDOID, BinarySearchDictionary<int, string>> zdo_strings = new();
+				Dictionary<ZDOID, BinarySearchDictionary<int, byte[]>> zdo_byteArrays = new();
+
 				zdoMan.m_saveData = new ZDOMan.SaveData
 				{
 					m_sessionID = zdoMan.m_sessionID,
@@ -243,6 +301,13 @@ public class SmoothSave : BaseUnityPlugin
 
 				copiedZdos = saveZDOs;
 				copiedZdoIndices = zdoIndex;
+				copiedZdo_floats = zdo_floats;
+				copiedZdo_vec3 = zdo_vec3;
+				copiedZdo_quats = zdo_quats;
+				copiedZdo_ints = zdo_ints;
+				copiedZdo_longs = zdo_longs;
+				copiedZdo_strings = zdo_strings;
+				copiedZdo_byteArrays = zdo_byteArrays;
 
 				Stopwatch stopwatch = Stopwatch.StartNew();
 				long longestBlockingTime = 0, lastElapsed = 0;
@@ -258,8 +323,39 @@ public class SmoothSave : BaseUnityPlugin
 							ZDO zdo = zdos[i];
 							if (zdo.Persistent)
 							{
-								zdoIndex.Add(zdo.m_uid, saveZDOs.Count);
+								ZDOID zdoid = zdo.m_uid;
+
+								zdoIndex.Add(zdoid, saveZDOs.Count);
 								saveZDOs.Add(zdo.Clone());
+
+								if (ZDOExtraData.s_floats.TryGetValue(zdoid, out BinarySearchDictionary<int, float>? value_floats))
+								{
+									zdo_floats.Add(zdoid, (BinarySearchDictionary<int, float>)value_floats.Clone());
+								}
+								if (ZDOExtraData.s_vec3.TryGetValue(zdoid, out BinarySearchDictionary<int, Vector3>? value_vec3))
+								{
+									zdo_vec3.Add(zdoid, (BinarySearchDictionary<int, Vector3>)value_vec3.Clone());
+								}
+								if (ZDOExtraData.s_quats.TryGetValue(zdoid, out BinarySearchDictionary<int, Quaternion>? value_quats))
+								{
+									zdo_quats.Add(zdoid, (BinarySearchDictionary<int, Quaternion>)value_quats.Clone());
+								}
+								if (ZDOExtraData.s_ints.TryGetValue(zdoid, out BinarySearchDictionary<int, int>? value_ints))
+								{
+									zdo_ints.Add(zdoid, (BinarySearchDictionary<int, int>)value_ints.Clone());
+								}
+								if (ZDOExtraData.s_longs.TryGetValue(zdoid, out BinarySearchDictionary<int, long>? value_longs))
+								{
+									zdo_longs.Add(zdoid, (BinarySearchDictionary<int, long>)value_longs.Clone());
+								}
+								if (ZDOExtraData.s_strings.TryGetValue(zdoid, out BinarySearchDictionary<int, string>? value_strings))
+								{
+									zdo_strings.Add(zdoid, (BinarySearchDictionary<int, string>)value_strings.Clone());
+								}
+								if (ZDOExtraData.s_byteArrays.TryGetValue(zdoid, out BinarySearchDictionary<int, byte[]>? value_byteArrays))
+								{
+									zdo_byteArrays.Add(zdoid, (BinarySearchDictionary<int, byte[]>)value_byteArrays.Clone());
+								}
 
 								if (--currentBatch <= 0)
 								{
@@ -305,13 +401,30 @@ public class SmoothSave : BaseUnityPlugin
 
 				zdoMan.m_saveData.m_nextUid = zdoMan.m_nextUid;
 
+				ZDOExtraData.s_saveFloats = zdo_floats;
+				ZDOExtraData.s_saveVec3s = zdo_vec3;
+				ZDOExtraData.s_saveQuats = zdo_quats;
+				ZDOExtraData.s_saveInts = zdo_ints;
+				ZDOExtraData.s_saveLongs = zdo_longs;
+				ZDOExtraData.s_saveStrings = zdo_strings;
+				ZDOExtraData.s_saveByteArrays = zdo_byteArrays;
+
+				long outsideSectorTime = stopwatch.ElapsedMilliseconds - outsideSectorStart;
+
+				long connectionHashDataStart = stopwatch.ElapsedMilliseconds;
+
+				ZDOExtraData.RegenerateConnectionHashData();
+				ZDOExtraData.s_saveConnections = ZDOExtraData.s_connectionsHashData.Clone();
+
+				long connectionHashDataTime = stopwatch.ElapsedMilliseconds - connectionHashDataStart;
+
 				if (saveLoggingOutput.Value == Logging.Simple)
 				{
 					Debug.Log($"World saved: Estimated blocking time without the mod: {stopwatch.ElapsedMilliseconds} ms. Blocking time now: {longestBlockingTime} ms.");
 				}
 				else if (saveLoggingOutput.Value == Logging.Detailed)
 				{
-					Debug.Log($"Copying ZDOs into internal buffer took {stopwatch.ElapsedMilliseconds} ms. (Longest blocking time: {longestBlockingTime} ms, copying ZDOs outside sector time: {stopwatch.ElapsedMilliseconds - outsideSectorStart} ms.");
+					Debug.Log($"Copying ZDOs into internal buffer took {stopwatch.ElapsedMilliseconds} ms. (Longest blocking time: {longestBlockingTime} ms, copying ZDOs outside sector time: {outsideSectorTime} ms, saving connections: {connectionHashDataTime} ms).");
 				}
 
 				ZoneSystem.instance.PrepareSave();
