@@ -8,9 +8,9 @@ using System.Reflection.Emit;
 using System.Threading.Tasks;
 using BepInEx;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
-using Debug = UnityEngine.Debug;
 
 namespace SmoothSave;
 
@@ -19,9 +19,12 @@ namespace SmoothSave;
 public class SmoothSave : BaseUnityPlugin
 {
 	private const string ModName = "Smooth Save";
-	private const string ModVersion = "1.0.2";
+	private const string ModVersion = "1.0.3";
 	private const string ModGUID = "org.bepinex.plugins.smoothsave";
 
+	private static SmoothSave selfReference = null!;
+	private static ManualLogSource logger => selfReference.Logger;
+	
 	private static ConfigEntry<int> zdoBatchSize = null!;
 	private static ConfigEntry<Logging> saveLoggingOutput = null!;
 
@@ -29,11 +32,13 @@ public class SmoothSave : BaseUnityPlugin
 	{
 		Off,
 		Simple,
-		Detailed
+		Detailed,
 	}
 
 	public void Awake()
 	{
+		selfReference = this;
+
 		Assembly assembly = Assembly.GetExecutingAssembly();
 		Harmony harmony = new(ModGUID);
 		harmony.PatchAll(assembly);
@@ -42,7 +47,12 @@ public class SmoothSave : BaseUnityPlugin
 		saveLoggingOutput = Config.Bind("1 - General", "World save output", Logging.Simple, "Log level for world saves.");
 	}
 
-	private static Task customZDOCopyTask = Task.CompletedTask;
+	static SmoothSave()
+	{
+		customZDOCopyTask.SetResult(true);
+	}
+
+	private static TaskCompletionSource<bool> customZDOCopyTask = new();
 
 	private static readonly List<int> removedIndices = new();
 	private static Dictionary<ZDOID, int>? copiedZdoIndices;
@@ -57,13 +67,20 @@ public class SmoothSave : BaseUnityPlugin
 
 	private static int copyingSectorId;
 	private static int copyingSectorOffset;
+	
+	private static void Log(string message)
+	{
+		logger.LogMessage(message);
+	}
 
 	[HarmonyPatch(typeof(ZNet), nameof(ZNet.SaveWorldThread))]
 	public class SplitSaveWorld
 	{
-		private static void Prefix()
+		private static bool Prefix()
 		{
-			customZDOCopyTask.Wait();
+			Task<bool> task = customZDOCopyTask.Task;
+			task.Wait();
+			return task.Result;
 		}
 	}
 
@@ -268,16 +285,22 @@ public class SmoothSave : BaseUnityPlugin
 		}
 	}
 
+	private static void AbortSave()
+	{
+		customZDOCopyTask.SetResult(false);
+		Log("Aborted saving due to new save request while ZDOs for saving are being collected.");
+	}
+
 	[HarmonyPatch(typeof(ZNet), nameof(ZNet.SaveWorld))]
 	public class ReplaceZDOCopying
 	{
 		private static void CustomZDOCopy(ZDOMan zdoMan)
 		{
+			TaskCompletionSource<bool> task = new();
+			customZDOCopyTask = task;
+
 			IEnumerator save()
 			{
-				TaskCompletionSource<object?> task = new();
-				customZDOCopyTask = task.Task;
-
 				yield return null;
 
 				Dictionary<ZDOID, int> zdoIndex = new();
@@ -420,24 +443,45 @@ public class SmoothSave : BaseUnityPlugin
 
 				if (saveLoggingOutput.Value == Logging.Simple)
 				{
-					Debug.Log($"World saved: Estimated blocking time without the mod: {stopwatch.ElapsedMilliseconds} ms. Blocking time now: {longestBlockingTime} ms.");
+					Log($"World saved: Estimated blocking time without the mod: {stopwatch.ElapsedMilliseconds} ms. Blocking time now: {longestBlockingTime} ms.");
 				}
 				else if (saveLoggingOutput.Value == Logging.Detailed)
 				{
-					Debug.Log($"Copying ZDOs into internal buffer took {stopwatch.ElapsedMilliseconds} ms. (Longest blocking time: {longestBlockingTime} ms, copying ZDOs outside sector time: {outsideSectorTime} ms, saving connections: {connectionHashDataTime} ms).");
+					Log($"Copying ZDOs into internal buffer took {stopwatch.ElapsedMilliseconds} ms. (Longest blocking time: {longestBlockingTime} ms, copying ZDOs outside sector time: {outsideSectorTime} ms, saving connections: {connectionHashDataTime} ms).");
 				}
 
 				ZoneSystem.instance.PrepareSave();
 				RandEventSystem.instance.PrepareSave();
 
-				ZNet.instance.m_saveThreadStartTime = Time.realtimeSinceStartup;
-				task.SetResult(null);
-
 				copiedZdos = null!;
 				copiedZdoIndices = null;
+
+				ZNet.instance.m_saveThreadStartTime = Time.realtimeSinceStartup;
+				task.SetResult(true);
 			}
 
-			ZNet.instance.StartCoroutine(save());
+			IEnumerator saveCoroutine = save();
+			ZNet.instance.StartCoroutine(saveCoroutine);
+
+			// On abort
+			customZDOCopyTask.Task.ContinueWith(_ => ZNet.instance.StopCoroutine(saveCoroutine));
+		}
+
+		// If we are still in process of collecting ZDOs, no point in restarting saving
+		public static bool Prefix(bool sync)
+		{
+			if (customZDOCopyTask.Task.IsCompleted)
+			{
+				return true;
+			}
+
+			if (sync)
+			{
+				AbortSave();
+				return true;
+			}
+
+			return false;
 		}
 
 		public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator ilg)
@@ -463,6 +507,18 @@ public class SmoothSave : BaseUnityPlugin
 					insertCustomSave = true;
 				}
 				yield return instruction;
+			}
+		}
+	}
+
+	[HarmonyPatch(typeof(ZNet), nameof(ZNet.StopAll))]
+	private class InterceptSaveThreadJoinOnStop
+	{
+		public static void Prefix(ZNet __instance)
+		{
+			if (!__instance.m_haveStoped && !customZDOCopyTask.Task.IsCompleted)
+			{
+				__instance.SaveWorld(true);
 			}
 		}
 	}
