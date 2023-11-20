@@ -19,12 +19,12 @@ namespace SmoothSave;
 public class SmoothSave : BaseUnityPlugin
 {
 	private const string ModName = "Smooth Save";
-	private const string ModVersion = "1.0.3";
+	private const string ModVersion = "1.0.4";
 	private const string ModGUID = "org.bepinex.plugins.smoothsave";
 
 	private static SmoothSave selfReference = null!;
 	private static ManualLogSource logger => selfReference.Logger;
-	
+
 	private static ConfigEntry<int> zdoBatchSize = null!;
 	private static ConfigEntry<Logging> saveLoggingOutput = null!;
 
@@ -67,7 +67,7 @@ public class SmoothSave : BaseUnityPlugin
 
 	private static int copyingSectorId;
 	private static int copyingSectorOffset;
-	
+
 	private static void Log(string message)
 	{
 		logger.LogMessage(message);
@@ -119,15 +119,13 @@ public class SmoothSave : BaseUnityPlugin
 	[HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.RPC_ZDOData))]
 	public class TrackZDORPCChanges
 	{
-		private static ZDO CloneUpdatedZDO(ZDO zdo)
+		private static void CloneUpdatedZDO(ZDO zdo)
 		{
 			if (copiedZdoIndices!.TryGetValue(zdo.m_uid, out int index))
 			{
 				copiedZdos[index] = zdo.Clone();
 				UpdateZDOExtraData(zdo.m_uid);
 			}
-
-			return zdo;
 		}
 
 		private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> _instructions, ILGenerator ilg)
@@ -139,15 +137,14 @@ public class SmoothSave : BaseUnityPlugin
 			{
 				if (instructions[i].opcode == OpCodes.Callvirt && instructions[i].OperandIs(DeserializeZDO))
 				{
-
 					Label endLabel = ilg.DefineLabel();
 
-					instructions.InsertRange(i + 2, new[]
+					instructions[i + 2].labels.Add(endLabel);
+					instructions.InsertRange(i + 1, new[]
 					{
 						new CodeInstruction(OpCodes.Ldsfld, AccessTools.DeclaredField(typeof(SmoothSave), nameof(copiedZdoIndices))),
 						new CodeInstruction(OpCodes.Brfalse, endLabel),
 						new CodeInstruction(OpCodes.Call, AccessTools.DeclaredMethod(typeof(TrackZDOChanges), nameof(CloneUpdatedZDO))),
-						new CodeInstruction(OpCodes.Pop) { labels = { endLabel } },
 					});
 
 					instructions.Insert(i - 1, new CodeInstruction(OpCodes.Dup));
