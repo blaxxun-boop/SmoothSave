@@ -19,7 +19,7 @@ namespace SmoothSave;
 public class SmoothSave : BaseUnityPlugin
 {
 	private const string ModName = "Smooth Save";
-	private const string ModVersion = "1.0.4";
+	private const string ModVersion = "1.0.5";
 	private const string ModGUID = "org.bepinex.plugins.smoothsave";
 
 	private static SmoothSave selfReference = null!;
@@ -119,13 +119,14 @@ public class SmoothSave : BaseUnityPlugin
 	[HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.RPC_ZDOData))]
 	public class TrackZDORPCChanges
 	{
-		private static void CloneUpdatedZDO(ZDO zdo)
+		private static ZDO CloneUpdatedZDO(ZDO zdo)
 		{
 			if (copiedZdoIndices!.TryGetValue(zdo.m_uid, out int index))
 			{
 				copiedZdos[index] = zdo.Clone();
 				UpdateZDOExtraData(zdo.m_uid);
 			}
+			return zdo;
 		}
 
 		private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> _instructions, ILGenerator ilg)
@@ -139,12 +140,12 @@ public class SmoothSave : BaseUnityPlugin
 				{
 					Label endLabel = ilg.DefineLabel();
 
-					instructions[i + 2].labels.Add(endLabel);
 					instructions.InsertRange(i + 1, new[]
 					{
 						new CodeInstruction(OpCodes.Ldsfld, AccessTools.DeclaredField(typeof(SmoothSave), nameof(copiedZdoIndices))),
 						new CodeInstruction(OpCodes.Brfalse, endLabel),
 						new CodeInstruction(OpCodes.Call, AccessTools.DeclaredMethod(typeof(TrackZDOChanges), nameof(CloneUpdatedZDO))),
+						new CodeInstruction(OpCodes.Pop) { labels = { endLabel } },
 					});
 
 					instructions.Insert(i - 1, new CodeInstruction(OpCodes.Dup));
